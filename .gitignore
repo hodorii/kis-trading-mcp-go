@@ -1,0 +1,19 @@
+# Go binaries
+kis-mcp-go
+../kis-mcp-go
+
+# OS generated files
+.DS_Store
+.DS_Store?
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# Environment variables
+.env
+.env.*
+!.env.template
+
+# Master data (optional, depends on preference)
+# configs/master/master.db
+# configs/master/**/*.csv
