@@ -17,3 +17,6 @@ Thumbs.db
 # Master data (optional, depends on preference)
 # configs/master/master.db
 # configs/master/**/*.csv
+
+# Built server binary
+main

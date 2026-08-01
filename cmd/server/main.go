@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,80 +31,119 @@ func main() {
 	dbPath, _ := filepath.Abs("configs/master/master.db")
 	repo, _ := db.NewRepository(dbPath)
 
-	s := server.NewMCPServer("KIS Trading MCP Server (Go)", "1.0.0", server.WithLogging())
+	s := server.NewMCPServer("KIS Trading MCP Server (Korea Investment & Securities)", "1.0.0", server.WithLogging())
 
-	// [1] 국내 주식 도구 (잔고 포함)
-	s.AddTool(mcp.NewTool("domestic_stock",
-		mcp.WithDescription("국내주식 조회/주문/뉴스/공시/잔고 도구"),
+	// --- 국내 주식 도구 ---
+	s.AddTool(mcp.NewTool("find_stock_code",
+		mcp.WithDescription("종목명으로 주식 코드 검색"),
+		mcp.WithString("stock_name", mcp.Required(), mcp.Description("검색할 종목명")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, _ := request.Params.Arguments.(map[string]any)
-		apiType, _ := args["api_type"].(string)
-		params, _ := args["params"].(map[string]any)
-
-		switch apiType {
-		case "find_stock_code":
-			keyword, _ := params["stock_name"].(string)
-			res, _ := repo.FindStock(keyword)
-			data, _ := json.MarshalIndent(res, "", "  ")
-			return mcp.NewToolResultText(string(data)), nil
-
-		case "inquire_price":
-			iscd, _ := params["fid_input_iscd"].(string)
-			res, err := kisClient.InquirePrice("J", iscd)
-			if err != nil { return mcp.NewToolResultError(err.Error()), nil }
-			data, _ := json.MarshalIndent(res.Output, "", "  ")
-			return mcp.NewToolResultText(string(data)), nil
-
-		case "inquire_balance":
-			res, err := kisClient.InquireBalance(cano)
-			if err != nil { return mcp.NewToolResultError(err.Error()), nil }
-			data, _ := json.MarshalIndent(res, "", "  ")
-			return mcp.NewToolResultText(string(data)), nil
-
-		case "news_title":
-			iscd, _ := params["fid_input_iscd"].(string)
-			res, err := kisClient.InquireNewsTitle(iscd)
-			if err != nil { return mcp.NewToolResultError(err.Error()), nil }
-			data, _ := json.MarshalIndent(res.Output, "", "  ")
-			return mcp.NewToolResultText(string(data)), nil
-
-		case "order_cash":
-			trID := "TTTC0802U"
-			if isPaper { trID = "VTTC0802U" }
-			orderReq := kis.OrderRequest{
-				CANO: cano,
-				ACNT_PRDT_CD: "01",
-				PDNO: params["fid_input_iscd"].(string),
-				ORD_DVSN: "01",
-				ORD_QTY: fmt.Sprintf("%v", params["ord_qty"]),
-				ORD_UNPR: "0",
-			}
-			res, err := kisClient.OrderCash(trID, orderReq)
-			if err != nil { return mcp.NewToolResultError(err.Error()), nil }
-			data, _ := json.MarshalIndent(res.Output, "", "  ")
-			return mcp.NewToolResultText(string(data)), nil
-
-		default:
-			return mcp.NewToolResultError("Unsupported api_type"), nil
-		}
+		args := request.Params.Arguments.(map[string]any)
+		name := args["stock_name"].(string)
+		res, _ := repo.FindStock(name)
+		data, _ := json.MarshalIndent(res, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
 	})
 
-	// [2] 해외 주식 도구 (미국 등)
-	s.AddTool(mcp.NewTool("overseas_stock",
-		mcp.WithDescription("해외주식(미국 등) 조회 도구"),
+	s.AddTool(mcp.NewTool("get_domestic_price",
+		mcp.WithDescription("국내 주식 현재가 조회"),
+		mcp.WithString("iscd", mcp.Required(), mcp.Description("종목 코드 (6자리)")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, _ := request.Params.Arguments.(map[string]any)
-		apiType, _ := args["api_type"].(string)
-		params, _ := args["params"].(map[string]any)
-
-		if apiType == "inquire_price" {
-			res, err := kisClient.InquireOverseasPrice(params["excd"].(string), params["symb"].(string))
-			if err != nil { return mcp.NewToolResultError(err.Error()), nil }
-			data, _ := json.MarshalIndent(res.Output, "", "  ")
-			return mcp.NewToolResultText(string(data)), nil
-		}
-		return mcp.NewToolResultError("Unsupported api_type"), nil
+		args := request.Params.Arguments.(map[string]any)
+		iscd := args["iscd"].(string)
+		res, err := kisClient.InquirePrice("J", iscd)
+		if err != nil { return mcp.NewToolResultError(err.Error()), nil }
+		data, _ := json.MarshalIndent(res.Output, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
 	})
+
+	s.AddTool(mcp.NewTool("get_balance",
+		mcp.WithDescription("국내 주식 계좌 잔고 조회"),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		res, err := kisClient.InquireBalance(cano)
+		if err != nil { return mcp.NewToolResultError(err.Error()), nil }
+		data, _ := json.MarshalIndent(res, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	s.AddTool(mcp.NewTool("get_ohlcv",
+		mcp.WithDescription("국내 주식 기간별 시세(OHLCV) 조회"),
+		mcp.WithString("iscd", mcp.Required(), mcp.Description("종목 코드 (6자리)")),
+		mcp.WithString("period", mcp.Required(), mcp.Description("조회 구분: 'D' (일봉), 'W' (주봉), 'M' (월봉)")),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.Params.Arguments.(map[string]any)
+		iscd := args["iscd"].(string)
+		period := args["period"].(string)
+		res, err := kisClient.InquireDailyPrice(iscd, period)
+		if err != nil { return mcp.NewToolResultError(err.Error()), nil }
+		data, _ := json.MarshalIndent(res.Output, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	s.AddTool(mcp.NewTool("get_minute_ohlcv",
+		mcp.WithDescription("국내 주식 분봉(시간대별) 시세 조회 — 1회 호출당 약 120개 분봉 반환"),
+		mcp.WithString("iscd", mcp.Required(), mcp.Description("종목 코드 (6자리)")),
+		mcp.WithString("date", mcp.Description("조회 기준일 YYYYMMDD (생략 시 당일)")),
+		mcp.WithString("hour", mcp.Description("조회 종료 시각 HHMMSS, 이 시각부터 과거로 조회 (예: 153000, 생략 시 최신)")),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.Params.Arguments.(map[string]any)
+		iscd := args["iscd"].(string)
+		date, _ := args["date"].(string)
+		hour, _ := args["hour"].(string)
+		res, err := kisClient.InquireTimeDailyChartPrice(iscd, date, hour)
+		if err != nil { return mcp.NewToolResultError(err.Error()), nil }
+		data, _ := json.MarshalIndent(res.Output2, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
+	s.AddTool(mcp.NewTool("get_etf_constituents",
+		mcp.WithDescription("ETF 구성종목 및 비중 조회"),
+		mcp.WithString("iscd", mcp.Required(), mcp.Description("ETF 종목 코드 (6자리)")),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.Params.Arguments.(map[string]any)
+		iscd := args["iscd"].(string)
+		res, err := kisClient.InquireETFConstituents(iscd)
+		if err != nil { return mcp.NewToolResultError(err.Error()), nil }
+		data, _ := json.MarshalIndent(res.Output, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
+
+	s.AddTool(mcp.NewTool("order_domestic_stock",
+		mcp.WithDescription("국내 주식 현금 주문"),
+		mcp.WithString("iscd", mcp.Required(), mcp.Description("종목 코드 (6자리)")),
+		mcp.WithString("side", mcp.Required(), mcp.Description("주문 구분 ('buy' 또는 'sell')")),
+		mcp.WithString("qty", mcp.Required(), mcp.Description("주문 수량")),
+		mcp.WithString("price", mcp.Required(), mcp.Description("주문 단가")),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.Params.Arguments.(map[string]any)
+		iscd := args["iscd"].(string)
+		side := args["side"].(string)
+		qty := args["qty"].(string)
+		price := args["price"].(string)
+
+		trID := "TTTC0802U" // 기본 매수
+		if side == "sell" {
+			trID = "TTTC0801U"
+		}
+		if isPaper {
+			trID = "V" + trID[1:]
+		}
+
+		orderReq := kis.OrderRequest{
+			CANO:         cano,
+			ACNT_PRDT_CD: "01",
+			PDNO:         iscd,
+			ORD_DVSN:     "00", // 지정가
+			ORD_QTY:      qty,
+			ORD_UNPR:     price,
+		}
+		res, err := kisClient.OrderCash(trID, orderReq)
+		if err != nil { return mcp.NewToolResultError(err.Error()), nil }
+		data, _ := json.MarshalIndent(res.Output, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
+	})
+
 
 	log.Printf("🚀 KIS MCP Server (Go) with Balance starting...")
 	if err := server.ServeStdio(s); err != nil {
